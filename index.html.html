@@ -1,0 +1,681 @@
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { Upload, Download, Users, BarChart2, Filter, Table as TableIcon, AlertCircle, Award, FileDown, FileUp, XCircle, Loader2, CheckCircle2 } from 'lucide-react';
+
+// --- 初始模擬資料 (Mock Data) ---
+const INITIAL_DATA = [
+  { id: 'E001', bg: '消費性電子', dept: '產品設計處', level: 'One-down', age: 38, tenure: 8, potential: 'Green', perf23: 'A', perf24: 'A', perf25: 'S', edu: '碩士', uni: '國立台灣大學', major: '工業設計', program: '海外高階歷練' },
+  { id: 'E002', bg: '消費性電子', dept: '產品設計處', level: 'Two-down', age: 32, tenure: 4, potential: 'Yellow', perf23: 'B+', perf24: 'A', perf25: 'A', edu: '學士', uni: '國立成功大學', major: '機械工程', program: '跨部門專案領導' },
+  { id: 'E003', bg: '消費性電子', dept: '全球行銷處', level: 'One-down', age: 42, tenure: 12, potential: 'Red', perf23: 'A', perf24: 'B+', perf25: 'B+', edu: '碩士', uni: '國立政治大學', major: '企業管理', program: '無' },
+  { id: 'E004', bg: '企業解決方案', dept: '雲端架構處', level: 'One-down', age: 36, tenure: 6, potential: 'Green', perf23: 'S', perf24: 'S', perf25: 'A', edu: '碩士', uni: '國立清華大學', major: '資訊工程', program: 'EMBA贊助' },
+  { id: 'E005', bg: '企業解決方案', dept: '雲端架構處', level: 'Two-down', age: 29, tenure: 3, potential: 'Yellow', perf23: 'A', perf24: 'A', perf25: 'A', edu: '碩士', uni: '國立交通大學', major: '資訊科學', program: '技術專家導師制' },
+  { id: 'E006', bg: '企業解決方案', dept: '業務拓展處', level: 'One-down', age: 45, tenure: 15, potential: 'Red', perf23: 'B', perf24: 'B+', perf25: 'B', edu: '學士', uni: '輔仁大學', major: '國際貿易', program: '無' },
+];
+
+const POTENTIAL_COLORS = {
+  Green: 'bg-emerald-500',
+  Yellow: 'bg-amber-400',
+  Red: 'bg-rose-500'
+};
+
+const POTENTIAL_LABELS = {
+  Green: '綠燈 (1-2年接班)',
+  Yellow: '黃燈 (3-5年接班)',
+  Red: '紅燈 (5年以上)'
+};
+
+// Excel 欄位對應表 (中英轉換)
+const EXCEL_HEADERS = {
+  '員工編號': 'id',
+  '事業群': 'bg',
+  '單位': 'dept',
+  '接班層級(One-down/Two-down)': 'level',
+  '年齡': 'age',
+  '年資': 'tenure',
+  '潛力燈號(Green/Yellow/Red)': 'potential',
+  '2023考績': 'perf23',
+  '2024考績': 'perf24',
+  '2025考績': 'perf25',
+  '最高學歷': 'edu',
+  '學校名稱': 'uni',
+  '科系': 'major',
+  '預計給與的培育計畫': 'program'
+};
+
+export default function App() {
+  const [data, setData] = useState(INITIAL_DATA);
+  const [filters, setFilters] = useState({ bg: 'All', dept: 'All', level: 'All', potential: 'All', pipelineAge: 'All' });
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [isLibLoaded, setIsLibLoaded] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // --- 動態載入 SheetJS ---
+  useEffect(() => {
+    if (window.XLSX) {
+      setIsLibLoaded(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.async = true;
+    script.onload = () => setIsLibLoaded(true);
+    document.body.appendChild(script);
+
+    return () => {
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, []);
+
+  // --- 資料篩選與統計 ---
+  const filteredData = useMemo(() => {
+    return data.filter(item => {
+      const matchBg = filters.bg === 'All' || item.bg === filters.bg;
+      const matchDept = filters.dept === 'All' || item.dept === filters.dept;
+      const matchLevel = filters.level === 'All' || item.level === filters.level;
+      const matchPotential = filters.potential === 'All' || item.potential === filters.potential;
+
+      // 梯隊年齡與燈號綜合判斷
+      let matchPipeline = true;
+      if (filters.pipelineAge !== 'All') {
+        const { level, potential, age } = item;
+        const numAge = Number(age) || 999; // 防呆，若無年齡視為極大值
+
+        switch (filters.pipelineAge) {
+          case 'O_G_60': matchPipeline = (level === 'One-down' && potential === 'Green' && numAge <= 60); break;
+          case 'O_Y_55': matchPipeline = (level === 'One-down' && potential === 'Yellow' && numAge <= 55); break;
+          case 'O_R_50': matchPipeline = (level === 'One-down' && potential === 'Red' && numAge <= 50); break;
+          case 'T_G_58': matchPipeline = (level === 'Two-down' && potential === 'Green' && numAge <= 58); break;
+          case 'T_Y_55': matchPipeline = (level === 'Two-down' && potential === 'Yellow' && numAge <= 55); break;
+          case 'T_R_50': matchPipeline = (level === 'Two-down' && potential === 'Red' && numAge <= 50); break;
+          case 'Valid_All':
+            // ✅ 所有符合標準梯隊年齡者
+            const validO = level === 'One-down' && ((potential === 'Green' && numAge <= 60) || (potential === 'Yellow' && numAge <= 55) || (potential === 'Red' && numAge <= 50));
+            const validT = level === 'Two-down' && ((potential === 'Green' && numAge <= 58) || (potential === 'Yellow' && numAge <= 55) || (potential === 'Red' && numAge <= 50));
+            matchPipeline = validO || validT;
+            break;
+          case 'Invalid_All':
+            // ⚠️ 具備層級身份，但超出標準年齡（超齡高風險）
+            const isO = level === 'One-down';
+            const isT = level === 'Two-down';
+            const isV_O = isO && ((potential === 'Green' && numAge <= 60) || (potential === 'Yellow' && numAge <= 55) || (potential === 'Red' && numAge <= 50));
+            const isV_T = isT && ((potential === 'Green' && numAge <= 58) || (potential === 'Yellow' && numAge <= 55) || (potential === 'Red' && numAge <= 50));
+            matchPipeline = (isO || isT) && !(isV_O || isV_T);
+            break;
+          default:
+            matchPipeline = true;
+        }
+      }
+
+      return matchBg && matchDept && matchLevel && matchPotential && matchPipeline;
+    });
+  }, [data, filters]);
+
+  const options = useMemo(() => {
+    const bgs = ['All', ...new Set(data.map(d => d.bg).filter(Boolean))];
+    const depts = ['All', ...new Set(data.filter(d => filters.bg === 'All' || d.bg === filters.bg).map(d => d.dept).filter(Boolean))];
+    const levels = ['All', 'One-down', 'Two-down'];
+    return { bgs, depts, levels };
+  }, [data, filters.bg]);
+
+  const stats = useMemo(() => {
+    const total = filteredData.length;
+    const green = filteredData.filter(d => d.potential === 'Green').length;
+    const yellow = filteredData.filter(d => d.potential === 'Yellow').length;
+    const red = filteredData.filter(d => d.potential === 'Red').length;
+    return { total, green, yellow, red };
+  }, [filteredData]);
+
+  // --- 圖表資料準備 ---
+  const riskChartData = useMemo(() => {
+    const grouped = filteredData.reduce((acc, curr) => {
+      if (!curr.dept) return acc;
+      if (!acc[curr.dept]) acc[curr.dept] = { Green: 0, Yellow: 0, Red: 0, total: 0 };
+      if (curr.potential && acc[curr.dept][curr.potential] !== undefined) {
+        acc[curr.dept][curr.potential]++;
+      }
+      acc[curr.dept].total++;
+      return acc;
+    }, {});
+
+    return Object.entries(grouped).map(([dept, counts]) => ({
+      dept,
+      greenPct: counts.total === 0 ? 0 : (counts.Green / counts.total) * 100,
+      yellowPct: counts.total === 0 ? 0 : (counts.Yellow / counts.total) * 100,
+      redPct: counts.total === 0 ? 0 : (counts.Red / counts.total) * 100,
+      ...counts
+    })).sort((a, b) => b.total - a.total);
+  }, [filteredData]);
+
+  const programData = useMemo(() => {
+    const counts = filteredData.reduce((acc, curr) => {
+      const prog = curr.program || '無';
+      acc[prog] = (acc[prog] || 0) + 1;
+      return acc;
+    }, {});
+    return Object.entries(counts)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [filteredData]);
+
+  // --- 強健的檔案下載與備援機制 ---
+  const triggerDownloadOrFallback = (wb, filename, fallbackDataArray) => {
+    try {
+      // 嘗試標準 Blob 下載
+      const wbout = window.XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+      setSuccessMsg(`檔案「${filename}」下載成功！`);
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err) {
+      console.warn("標準下載被攔截，啟動剪貼簿備援機制", err);
+      // 備援：將資料複製到剪貼簿 (Tab 分隔可直接貼入 Excel)
+      try {
+        const textContent = fallbackDataArray.map(row => row.join('\t')).join('\n');
+        const textArea = document.createElement('textarea');
+        textArea.value = textContent;
+        // 隱藏 textArea
+        textArea.style.position = 'fixed';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        
+        setSuccessMsg('預覽環境阻擋了直接下載。系統已為您將資料【複製到剪貼簿】！請直接打開 Excel 並按下 Ctrl+V 貼上即可。');
+        setTimeout(() => setSuccessMsg(''), 8000);
+      } catch (fallbackErr) {
+        setErrorMsg('下載失敗，且無法存取剪貼簿。請在您自己的電腦上執行此程式碼。');
+      }
+    }
+  };
+
+  // --- 下載範例 Excel 格式 ---
+  const handleDownloadTemplate = () => {
+    if (!window.XLSX) return setErrorMsg('Excel 模組尚未載入完成，請稍後再試。');
+    
+    setErrorMsg('');
+    setSuccessMsg('');
+    const headers = Object.keys(EXCEL_HEADERS);
+    const templateData = [
+      headers,
+      ['E999', '範例事業群', '範例處', 'One-down', 35, 5, 'Green', 'A', 'S', 'A', '碩士', '台灣大學', '企管', '領導力培訓']
+    ];
+    
+    const ws = window.XLSX.utils.aoa_to_sheet(templateData);
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "TalentData");
+    
+    triggerDownloadOrFallback(wb, "高潛力人才資料庫_匯入範本.xlsx", templateData);
+  };
+
+  // --- 匯出目前畫面資料 ---
+  const handleExport = () => {
+    if (!window.XLSX) return setErrorMsg('Excel 模組尚未載入完成，請稍後再試。');
+
+    setErrorMsg('');
+    setSuccessMsg('');
+    const reverseHeaders = Object.entries(EXCEL_HEADERS).reduce((acc, [zh, en]) => {
+      acc[en] = zh;
+      return acc;
+    }, {});
+
+    const exportDataJSON = filteredData.map(row => {
+      const newRow = {};
+      for (const [enKey, val] of Object.entries(row)) {
+        if (reverseHeaders[enKey]) {
+          newRow[reverseHeaders[enKey]] = val;
+        }
+      }
+      return newRow;
+    });
+
+    // 準備備援的二維陣列 (用於貼上 Excel)
+    const headers = Object.keys(EXCEL_HEADERS);
+    const fallbackArray = [
+      headers,
+      ...filteredData.map(row => headers.map(h => row[EXCEL_HEADERS[h]] || ''))
+    ];
+
+    const ws = window.XLSX.utils.json_to_sheet(exportDataJSON);
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "ExportData");
+    
+    triggerDownloadOrFallback(wb, "高潛力人才資料庫_匯出清單.xlsx", fallbackArray);
+  };
+
+  // --- 處理 Excel 檔案上傳 ---
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!window.XLSX) {
+      setErrorMsg('Excel 模組尚未載入完成，請稍後再試。');
+      return;
+    }
+
+    setErrorMsg('');
+    setSuccessMsg('');
+    const reader = new FileReader();
+
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = window.XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const jsonData = window.XLSX.utils.sheet_to_json(ws, { raw: false });
+
+        if (jsonData.length === 0) throw new Error("上傳的檔案沒有資料");
+
+        const formattedData = jsonData.map(row => {
+          const newRow = {};
+          for (const [zhHeader, enKey] of Object.entries(EXCEL_HEADERS)) {
+             const foundKey = Object.keys(row).find(k => k.trim() === zhHeader.trim());
+             newRow[enKey] = foundKey ? row[foundKey] : '';
+          }
+          newRow.age = parseInt(newRow.age) || 0;
+          newRow.tenure = parseInt(newRow.tenure) || 0;
+          
+          if(newRow.potential) {
+             const p = newRow.potential.toLowerCase();
+             if(p.includes('green') || p.includes('綠')) newRow.potential = 'Green';
+             else if(p.includes('yellow') || p.includes('黃')) newRow.potential = 'Yellow';
+             else if(p.includes('red') || p.includes('紅')) newRow.potential = 'Red';
+             else newRow.potential = 'Green';
+          } else {
+             newRow.potential = 'Green';
+          }
+          return newRow;
+        }).filter(row => row.id);
+
+        if (formattedData.length === 0) {
+           throw new Error("無法辨識檔案內容，請確認是否使用下載的範本格式。");
+        }
+
+        setData(formattedData);
+        setFilters({ bg: 'All', dept: 'All', level: 'All', potential: 'All', pipelineAge: 'All' });
+        setSuccessMsg(`成功匯入 ${formattedData.length} 筆資料！`);
+        setTimeout(() => setSuccessMsg(''), 3000);
+        
+        if(fileInputRef.current) fileInputRef.current.value = '';
+
+      } catch (error) {
+        console.error(error);
+        setErrorMsg(error.message || "檔案讀取失敗，請確認格式正確。");
+        if(fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+      <header className="bg-slate-900 text-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <BarChart2 size={24} className="text-white" />
+            </div>
+            <h1 className="text-xl font-bold tracking-wide">高潛力人才資料庫</h1>
+            <span className="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded-full ml-2 border border-slate-600">Local MVP</span>
+          </div>
+          
+          <div className="flex space-x-3 items-center">
+            {!isLibLoaded && (
+              <span className="text-xs text-amber-400 flex items-center mr-2">
+                <Loader2 size={14} className="animate-spin mr-1" /> 套件準備中
+              </span>
+            )}
+            
+            <button 
+              onClick={handleDownloadTemplate}
+              disabled={!isLibLoaded}
+              className={`flex items-center px-3 py-2 text-sm rounded-md transition-colors duration-200 ${isLibLoaded ? 'text-slate-300 hover:text-white hover:bg-slate-800' : 'text-slate-600 cursor-not-allowed'}`}
+            >
+              <FileDown size={16} className="mr-2" />
+              <span className="hidden sm:inline">下載範本</span>
+            </button>
+            
+            <input 
+              type="file" 
+              accept=".xlsx, .xls, .csv" 
+              onChange={handleFileUpload} 
+              ref={fileInputRef} 
+              className="hidden" 
+              id="excel-upload"
+              disabled={!isLibLoaded}
+            />
+            <label 
+              htmlFor="excel-upload"
+              className={`cursor-pointer flex items-center px-4 py-2 text-sm rounded-md font-medium transition-colors duration-200 shadow-sm ${isLibLoaded ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-slate-700 text-slate-400 cursor-not-allowed'}`}
+            >
+              <FileUp size={16} className="mr-2" />
+              匯入更新
+            </label>
+
+            <button 
+              onClick={handleExport}
+              disabled={!isLibLoaded}
+              className={`flex items-center px-4 py-2 text-sm rounded-md font-medium transition-colors duration-200 shadow-sm ${isLibLoaded ? 'bg-blue-600 hover:bg-blue-500' : 'bg-slate-700 text-slate-400 cursor-not-allowed'}`}
+            >
+              <Download size={16} className="mr-2" />
+              匯出清單
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        
+        {/* 系統訊息提示區塊 (成功 / 失敗) */}
+        {errorMsg && (
+          <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md flex items-center justify-between shadow-sm animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center">
+              <AlertCircle className="h-5 w-5 text-red-500 mr-2 shrink-0" />
+              <span className="text-red-700 text-sm font-medium">{errorMsg}</span>
+            </div>
+            <button onClick={() => setErrorMsg('')} className="text-red-500 hover:text-red-700 shrink-0 ml-4">
+              <XCircle className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {successMsg && (
+          <div className="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-md flex items-center justify-between shadow-sm animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center">
+              <CheckCircle2 className="h-5 w-5 text-emerald-500 mr-2 shrink-0" />
+              <span className="text-emerald-700 text-sm font-medium">{successMsg}</span>
+            </div>
+            <button onClick={() => setSuccessMsg('')} className="text-emerald-500 hover:text-emerald-700 shrink-0 ml-4">
+              <XCircle className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+
+        {/* 篩選列 */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap gap-4 items-end">
+          <div className="flex items-center text-slate-700 font-semibold mb-1 w-full lg:w-auto">
+            <Filter size={18} className="mr-2 text-blue-600" />
+            全域資料篩選
+          </div>
+          
+          <div className="flex-1 min-w-[150px] sm:min-w-[200px]">
+            <label className="block text-xs font-medium text-slate-500 mb-1">事業群 (Business Group)</label>
+            <select 
+              value={filters.bg} 
+              onChange={e => setFilters({...filters, bg: e.target.value, dept: 'All'})}
+              className="w-full border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3 border bg-white"
+            >
+              {options.bgs.map(bg => <option key={bg} value={bg}>{bg === 'All' ? '全部事業群' : bg}</option>)}
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[150px] sm:min-w-[200px]">
+            <label className="block text-xs font-medium text-slate-500 mb-1">單位 (Department)</label>
+            <select 
+              value={filters.dept} 
+              onChange={e => setFilters({...filters, dept: e.target.value})}
+              className="w-full border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3 border bg-white"
+            >
+              {options.depts.map(dept => <option key={dept} value={dept}>{dept === 'All' ? '全部單位' : dept}</option>)}
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[150px] sm:min-w-[200px]">
+            <label className="block text-xs font-medium text-slate-500 mb-1">接班層級 (Level)</label>
+            <select 
+              value={filters.level} 
+              onChange={e => setFilters({...filters, level: e.target.value})}
+              className="w-full border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3 border bg-white"
+            >
+              {options.levels.map(level => <option key={level} value={level}>{level === 'All' ? '全部層級' : level}</option>)}
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[150px] sm:min-w-[200px]">
+            <label className="block text-xs font-medium text-slate-500 mb-1">潛力燈號 (Potential)</label>
+            <select 
+              value={filters.potential} 
+              onChange={e => setFilters({...filters, potential: e.target.value})}
+              className="w-full border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3 border bg-white"
+            >
+              <option value="All">全部燈號</option>
+              <option value="Green">綠燈 (1-2年)</option>
+              <option value="Yellow">黃燈 (3-5年)</option>
+              <option value="Red">紅燈 (5年以上)</option>
+            </select>
+          </div>
+
+          <div className="flex-1 min-w-[150px] sm:min-w-[240px]">
+            <label className="block text-xs font-medium text-slate-500 mb-1">梯隊年齡標準 (Age & Potential)</label>
+            <select 
+              value={filters.pipelineAge} 
+              onChange={e => setFilters({...filters, pipelineAge: e.target.value})}
+              className="w-full border-slate-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm py-2 px-3 border bg-white"
+            >
+              <option value="All">無年齡限制</option>
+              <optgroup label="✅ 符合標準梯隊">
+                <option value="Valid_All">所有年齡達標者</option>
+              </optgroup>
+              <optgroup label="⚠️ 高風險">
+                <option value="Invalid_All">超齡 / 未達標者</option>
+              </optgroup>
+              <optgroup label="One-down 年齡標準">
+                <option value="O_G_60">綠燈 (1-2年) 且 ≤ 60歲</option>
+                <option value="O_Y_55">黃燈 (3-5年) 且 ≤ 55歲</option>
+                <option value="O_R_50">紅燈 ({'>'}5年) 且 ≤ 50歲</option>
+              </optgroup>
+              <optgroup label="Two-down 年齡標準">
+                <option value="T_G_58">綠燈 (1-2年) 且 ≤ 58歲</option>
+                <option value="T_Y_55">黃燈 (3-5年) 且 ≤ 55歲</option>
+                <option value="T_R_50">紅燈 ({'>'}5年) 且 ≤ 50歲</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+
+        {/* 總覽卡片 */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">總潛力人才</p>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mt-1">{stats.total} <span className="text-sm font-normal text-slate-500">人</span></h3>
+              </div>
+              <div className="p-2 bg-blue-50 rounded-lg hidden sm:block"><Users size={20} className="text-blue-600" /></div>
+            </div>
+          </div>
+          <div className="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1 sm:mr-2"></span> <span className="hidden sm:inline">綠燈 (1-2年)</span><span className="sm:hidden">綠燈</span>
+                </p>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mt-1">{stats.green} <span className="text-sm font-normal text-slate-500">人</span></h3>
+              </div>
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 mt-3 sm:mt-4 rounded-full overflow-hidden">
+              <div className="bg-emerald-500 h-full transition-all duration-1000" style={{ width: `${stats.total ? (stats.green/stats.total)*100 : 0}%` }}></div>
+            </div>
+          </div>
+          <div className="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 mr-1 sm:mr-2"></span> <span className="hidden sm:inline">黃燈 (3-5年)</span><span className="sm:hidden">黃燈</span>
+                </p>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mt-1">{stats.yellow} <span className="text-sm font-normal text-slate-500">人</span></h3>
+              </div>
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 mt-3 sm:mt-4 rounded-full overflow-hidden">
+              <div className="bg-amber-400 h-full transition-all duration-1000" style={{ width: `${stats.total ? (stats.yellow/stats.total)*100 : 0}%` }}></div>
+            </div>
+          </div>
+          <div className="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-medium text-slate-500 uppercase tracking-wider flex items-center">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 mr-1 sm:mr-2"></span> <span className="hidden sm:inline">紅燈 (5年以上)</span><span className="sm:hidden">紅燈</span>
+                </p>
+                <h3 className="text-2xl sm:text-3xl font-bold text-slate-800 mt-1">{stats.red} <span className="text-sm font-normal text-slate-500">人</span></h3>
+              </div>
+              {stats.red > stats.green && <AlertCircle size={18} className="text-rose-500 hidden sm:block" title="紅燈人數高於綠燈，梯隊風險高" />}
+            </div>
+            <div className="w-full bg-slate-100 h-1.5 mt-3 sm:mt-4 rounded-full overflow-hidden">
+              <div className="bg-rose-500 h-full transition-all duration-1000" style={{ width: `${stats.total ? (stats.red/stats.total)*100 : 0}%` }}></div>
+            </div>
+          </div>
+        </div>
+
+        {/* 圖表區 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col min-h-[300px]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-2">
+              <h2 className="text-base sm:text-lg font-bold text-slate-800 flex items-center">
+                <AlertCircle size={18} className="mr-2 text-blue-600" /> 
+                單位接班健康度
+              </h2>
+              <div className="flex space-x-3 text-xs text-slate-500">
+                <span className="flex items-center"><div className="w-2 h-2 bg-emerald-500 rounded-sm mr-1"></div>綠燈</span>
+                <span className="flex items-center"><div className="w-2 h-2 bg-amber-400 rounded-sm mr-1"></div>黃燈</span>
+                <span className="flex items-center"><div className="w-2 h-2 bg-rose-500 rounded-sm mr-1"></div>紅燈</span>
+              </div>
+            </div>
+            
+            <div className="flex-1 flex flex-col justify-center space-y-4">
+              {riskChartData.length > 0 ? riskChartData.map((data, idx) => (
+                <div key={idx} className="w-full">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="font-medium text-slate-700">{data.dept}</span>
+                    <span className="text-slate-500 text-xs">共 {data.total} 人</span>
+                  </div>
+                  <div className="w-full h-6 bg-slate-100 rounded-md overflow-hidden flex border border-slate-200">
+                    {data.greenPct > 0 && <div style={{ width: `${data.greenPct}%` }} className="bg-emerald-500 flex items-center justify-center text-[10px] text-white font-bold hover:brightness-110" title={`綠燈: ${data.Green}人`}>{data.Green}</div>}
+                    {data.yellowPct > 0 && <div style={{ width: `${data.yellowPct}%` }} className="bg-amber-400 flex items-center justify-center text-[10px] text-white font-bold hover:brightness-110" title={`黃燈: ${data.Yellow}人`}>{data.Yellow}</div>}
+                    {data.redPct > 0 && <div style={{ width: `${data.redPct}%` }} className="bg-rose-500 flex items-center justify-center text-[10px] text-white font-bold hover:brightness-110" title={`紅燈: ${data.Red}人`}>{data.Red}</div>}
+                  </div>
+                </div>
+              )) : (
+                <div className="text-center text-slate-400 py-10 text-sm">無符合條件的資料</div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col min-h-[300px]">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-base sm:text-lg font-bold text-slate-800 flex items-center">
+                <Award size={18} className="mr-2 text-blue-600" /> 
+                培育資源分佈
+              </h2>
+            </div>
+            
+            <div className="flex-1 flex flex-col justify-center space-y-4">
+              {programData.length > 0 ? programData.map((data, idx) => {
+                const maxCount = Math.max(...programData.map(d => d.count));
+                const widthPct = (data.count / maxCount) * 100;
+                return (
+                  <div key={idx} className="w-full flex items-center">
+                    <div className="w-1/3 text-xs sm:text-sm text-slate-700 font-medium truncate pr-2" title={data.name}>
+                      {data.name}
+                    </div>
+                    <div className="w-2/3 flex items-center">
+                      <div className="h-4 sm:h-5 bg-blue-100 rounded-r-md transition-all duration-500" style={{ width: `${widthPct}%` }}>
+                        <div className="h-full bg-blue-500 rounded-r-md opacity-80" style={{ width: '100%' }}></div>
+                      </div>
+                      <span className="ml-2 sm:ml-3 text-xs sm:text-sm font-bold text-slate-700">{data.count} <span className="text-[10px] sm:text-xs font-normal text-slate-400">人</span></span>
+                    </div>
+                  </div>
+                )
+              }) : (
+                <div className="text-center text-slate-400 py-10 text-sm">無符合條件的資料</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 資料明細表 */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+            <h2 className="text-base sm:text-lg font-bold text-slate-800 flex items-center">
+              <TableIcon size={18} className="mr-2 text-blue-600" /> 
+              人才資料明細清單
+            </h2>
+            <span className="text-xs sm:text-sm text-slate-500">顯示 {filteredData.length} 筆資料</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-600 whitespace-nowrap">
+              <thead className="bg-slate-100 text-slate-700 text-xs uppercase font-semibold">
+                <tr>
+                  <th className="px-4 py-3">員工編號</th>
+                  <th className="px-4 py-3">單位 (事業群)</th>
+                  <th className="px-4 py-3">層級</th>
+                  <th className="px-4 py-3 text-center">燈號</th>
+                  <th className="px-4 py-3 text-center">年齡/年資</th>
+                  <th className="px-4 py-3 text-center">近三年考績</th>
+                  <th className="px-4 py-3">學歷 (學校科系)</th>
+                  <th className="px-4 py-3">預計培育計畫</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {filteredData.length > 0 ? filteredData.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-blue-50 transition-colors duration-150">
+                    <td className="px-4 py-3 font-medium text-slate-900">{row.id}</td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-800">{row.dept}</div>
+                      <div className="text-xs text-slate-400">{row.bg}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded text-[10px] sm:text-xs font-medium ${row.level === 'One-down' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {row.level}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`inline-flex items-center justify-center w-6 h-6 sm:w-auto sm:px-2 sm:py-1 rounded-full text-xs font-bold text-white ${POTENTIAL_COLORS[row.potential] || 'bg-slate-300'}`} title={POTENTIAL_LABELS[row.potential]}>
+                        <span className="sm:hidden">{POTENTIAL_LABELS[row.potential]?.charAt(0) || '?'}</span>
+                        <span className="hidden sm:inline">{POTENTIAL_LABELS[row.potential]?.split(' ')[0] || '未知'}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center text-xs sm:text-sm">
+                      {row.age} / {row.tenure}
+                    </td>
+                    <td className="px-4 py-3 text-center font-mono text-xs">
+                      <span className="text-slate-500">{row.perf23 || '-'}</span>/
+                      <span className="text-slate-700 font-bold">{row.perf24 || '-'}</span>/
+                      <span className="text-blue-600 font-bold">{row.perf25 || '-'}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-xs sm:text-sm">{row.edu}</div>
+                      <div className="text-[10px] sm:text-xs text-slate-500 truncate max-w-[120px] sm:max-w-[150px]" title={`${row.uni} - ${row.major}`}>
+                        {row.uni}-{row.major}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {row.program && row.program !== '無' ? (
+                        <span className="text-blue-700 bg-blue-50 px-2 py-1 rounded text-[10px] sm:text-xs border border-blue-100 truncate max-w-[150px] inline-block" title={row.program}>
+                          {row.program}
+                        </span>
+                      ) : <span className="text-slate-400 text-xs">-</span>}
+                    </td>
+                  </tr>
+                )) : (
+                  <tr>
+                    <td colSpan="8" className="px-4 py-8 text-center text-slate-400">沒有找到符合條件的資料</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
